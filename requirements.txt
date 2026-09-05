@@ -1,0 +1,19 @@
+fastapi
+uvicorn[standard]
+websockets
+python-multipart
+pydantic
+
+# ML / audio
+torch
+torchaudio
+speechbrain
+huggingface_hub
+soundfile
+librosa
+numpy
+scipy
+onnxruntime
+
+# prosody feature extraction (P1, now required by the scoring path)
+praat-parselmouth

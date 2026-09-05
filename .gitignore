@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# virtualenv (members create their own: python -m venv venv)
+venv/
+
+# runtime state -- enrollments/calls/history from local test sessions;
+# created fresh on every machine, must never be committed
+sih.db
+*.db
+enrolled_speakers/
+
+# speechbrain ECAPA checkpoint cache (~100 MB; re-downloads from HF on
+# first run -- see models/speaker.py)
+pretrained_models/
+
+# scratch
+_probe_*
+_*.db
+*.log
