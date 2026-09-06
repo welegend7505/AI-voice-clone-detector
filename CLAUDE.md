@@ -97,11 +97,14 @@ single biggest risk to this project finishing on time.
   real margin of 6 pts; raising it drops true catches at 52-53).
 - Still open (updated 2026-09-06 — see samples/PROVENANCE-stress.md for
   the full limitation list with numbers):
-  - The stress set's "fakes" are edge-tts neural voices of OTHER people,
-    not a true clone of the enrolled speaker. A real clone defeats the
-    mismatch signal, leaving only spoof (ceiling 75 with these weights) —
-    and a clone under moderate noise can still slip through. Generate a
-    genuine clone (ElevenLabs / F5-TTS / XTTS) and retest BEFORE the show.
+  - ~~Genuine-clone retest~~ DONE 2026-09-06 (clone_test.py): an XTTS-v2
+    clone of the enrolled speaker (12 s reference) scores spoof 0.65-0.81
+    -> risk 60.8-75.0, 2/2 chunks ALERT on synthesis_artifacts, while the
+    same speaker's real voice scores 19.6-32.2 with 0 alerts. Threshold 50
+    and current weights hold; no retune. Caveat: an ElevenLabs-quality
+    clone is untested (stock Roger scored spoof 0.39-0.77, one window near
+    threshold); re-run clone_test.py if one gets built. Clone file kept at
+    ../my_clone.wav (outside the repo; copy in if wanted as a demo asset).
   - Competing background speech (another voice within ~20 dB of the
     caller) false-alerts on real speech — both detectors and ECAPA
     degrade together. Keep the demo mic away from other voices.

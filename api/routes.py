@@ -23,6 +23,7 @@ and the connection stays open so the caller can retry.
 import asyncio
 import json
 import os
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, File, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
@@ -31,7 +32,7 @@ import alerts
 import storage
 from models import anti_spoof, prosody, speaker
 from risk.fusion import compute_risk
-from streaming.audio_utils import bytes_to_wav_file, chunk_stats
+from streaming.audio_utils import bytes_to_wav_file, chunk_stats, probe_audio
 
 router = APIRouter()
 
@@ -42,6 +43,22 @@ MIN_VOICED_FRAC = 0.05    # pitch-tracker voiced fraction: below this the
                           # chunk has no speech (a transient/click passes the
                           # RMS check but scores as fake -- measured
                           # 2026-09-06: click 0.00 vs speech 0.31+)
+
+
+def _log_intake(tag: str, src: str, audio_bytes: bytes,
+                rms: float | None = None) -> None:
+    """One console line per incoming recording/chunk showing the ACTUAL
+    pre-normalization format. Integration-debug surface: if the frontend
+    sends something other than agreed (48kHz, stereo, webm instead of
+    WAV, 0.4s chunks), it shows here immediately instead of surfacing as
+    an opaque error on the frontend side."""
+    info = probe_audio(audio_bytes)
+    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+    dur = f"{info['duration_s']:.2f}" if info["duration_s"] is not None else "?"
+    rate = f"{info['sr']}Hz x{info['channels']}ch" if info["sr"] else "UNREADABLE"
+    level = f" rms={rms:.4f}" if rms is not None else ""
+    print(f"[{tag} {ts}] {src} {dur}s {rate} {info['format']}{level} "
+          f"({len(audio_bytes)}B)", flush=True)
 
 
 @router.post("/api/v1/speakers/enroll")
@@ -55,10 +72,12 @@ async def enroll_speaker(file: UploadFile = File(...)):
         wav_path = bytes_to_wav_file(audio_bytes)
         stats = chunk_stats(wav_path)
     except Exception:
+        _log_intake("ENROLL-REJ", "upload", audio_bytes)
         return JSONResponse(
             status_code=400,
             content={"error": "upload is not a readable audio file (send WAV/PCM)"},
         )
+    _log_intake("ENROLL", "upload", audio_bytes, rms=stats["rms"])
 
     if stats["duration_s"] < MIN_ENROLL_SECONDS:
         return JSONResponse(
@@ -195,12 +214,16 @@ async def stream_audio(websocket: WebSocket, call_id: str):
             try:
                 chunk_wav = bytes_to_wav_file(audio_bytes)
             except Exception:
+                _log_intake("CHUNK-REJ", call_id[:8], audio_bytes)
                 await websocket.send_json({
                     "error": "audio chunk is not a readable audio file (send WAV/PCM)"})
                 continue
 
             try:
                 stats = chunk_stats(chunk_wav)
+                # Logged BEFORE the checks below, so rejected chunks (too
+                # short, silent, no speech) show their numbers here too.
+                _log_intake("CHUNK", call_id[:8], audio_bytes, rms=stats["rms"])
                 if stats["duration_s"] < MIN_CHUNK_SECONDS:
                     await websocket.send_json({
                         "error": f"audio chunk too short ({stats['duration_s']:.2f}s); "
@@ -246,6 +269,9 @@ async def stream_audio(websocket: WebSocket, call_id: str):
                 # like an error reply) and keep the socket open.
                 # Deliberately NOT appended to history: GET /risk keeps
                 # returning the last GOOD score instead of a null row.
+                ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+                print(f"[CHUNK-ERR {ts}] call={call_id[:8]} scoring failed: "
+                      f"{type(e).__name__}: {e}", flush=True)
                 await websocket.send_json({
                     "call_id": call_id,
                     "risk_score": None,

@@ -63,6 +63,52 @@ uvicorn main:app --reload --port 8000
 
 Check `http://localhost:8000/health` → should return `{"status": "ok"}`.
 
+### Host on a VPS (AlmaLinux) — reachable from anywhere
+
+Local runs bind to localhost only. To serve publicly, bind all interfaces
+(verified: `--host 0.0.0.0` listens on `0.0.0.0:8000`):
+
+```bash
+# one-time setup on the VPS (AlmaLinux 9)
+sudo dnf install -y python3.12 python3.12-pip
+git clone <this-repo> /opt/sih-backend && cd /opt/sih-backend
+python3.12 -m venv venv
+source venv/bin/activate
+# CPU torch FIRST so speechbrain doesn't drag in a 2GB+ CUDA wheel
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements.txt
+python test_models.py samples/stress/real_clean.wav   # warms the HF model cache
+
+# run (foreground test)
+uvicorn main:app --host 0.0.0.0 --port 8000
+
+# open the firewall (AlmaLinux uses firewalld; this is the step people forget)
+sudo firewall-cmd --permanent --add-port=8000/tcp --add-port=3000/tcp
+sudo firewall-cmd --reload
+
+# run properly (auto-restart on crash/reboot)
+sudo cp deploy/backend.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now backend
+journalctl -u backend -f        # watch the [CHUNK]/[ALERT] lines live
+```
+
+If the VPS is from a cloud provider, ALSO open ports 8000/3000 in its
+security-group/firewall web console — firewalld alone is not enough there.
+
+**Frontend on the same VPS:** its `.env.local` must point at the PUBLIC IP,
+not localhost (judges' browsers connect from their own machines):
+
+```
+NEXT_PUBLIC_API_BASE_URL=http://<VPS_PUBLIC_IP>:8000
+NEXT_PUBLIC_WS_BASE_URL=ws://<VPS_PUBLIC_IP>:8000
+NEXT_PUBLIC_BACKEND_ENABLED=true
+NEXT_PUBLIC_DEMO_MODE=true
+NEXT_PUBLIC_USE_MOCK_API=false
+```
+
+Security note: there is no auth and CORS is `*` — fine for a demo, but
+anyone who finds the IP can enroll/stream. Shut it down after the event.
+
 ## 2. API contract (share with Member 1 / frontend now)
 
 **`POST /api/v1/speakers/enroll`**
@@ -107,6 +153,14 @@ call continues and `GET /risk` keeps serving the last good score.
 A dropped connection does not end the call: reconnect to the same
 `call_id` and keep streaming. Concurrent calls are scored in parallel
 threads and never share state.
+
+Server-console greps while integrating with the frontend: `[ENROLL ...]` /
+`[CHUNK ...]` (one line per upload/streamed chunk: the ACTUAL
+pre-normalization format, sample rate, channels, duration, RMS),
+`[ENROLL-REJ ...]` / `[CHUNK-REJ ...]` (unreadable audio — includes a
+container hint; `webm/matroska` means the browser is sending raw
+MediaRecorder output instead of WAV), `[CHUNK-ERR ...]` (model failure on
+one chunk), `[ALERT ...]`.
 
 **`GET /api/v1/calls/{call_id}/risk`**
 Returns the most recent risk result for that call.

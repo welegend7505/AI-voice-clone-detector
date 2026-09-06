@@ -49,3 +49,44 @@ def chunk_stats(wav_path: str) -> dict:
     duration = len(data) / sr
     rms = float((data ** 2).mean() ** 0.5) if len(data) else 0.0
     return {"duration_s": duration, "rms": rms}
+
+
+def probe_audio(audio_bytes: bytes) -> dict:
+    """
+    What actually arrived, BEFORE 16kHz normalization: container, sample
+    rate, channels, duration. Feeds the per-chunk intake log so a frontend
+    format mismatch (e.g. MediaRecorder's webm/opus instead of WAV) is
+    visible on the server console the moment it happens.
+
+    Returns {"format", "sr", "channels", "duration_s"}; the last three are
+    None when the bytes are not parseable audio at all -- "format" then
+    carries a best-effort container hint from the magic bytes.
+    """
+    try:
+        meta = sf.info(io.BytesIO(audio_bytes))
+        return {"format": meta.format, "sr": meta.samplerate,
+                "channels": meta.channels, "duration_s": meta.duration}
+    except Exception:
+        return {"format": _container_hint(audio_bytes), "sr": None,
+                "channels": None, "duration_s": None}
+
+
+def _container_hint(audio_bytes: bytes) -> str:
+    """Best-effort container guess from magic bytes (unreadable input)."""
+    if audio_bytes[:4] == b"RIFF":
+        return "wav? (RIFF header but body unparseable -- truncated?)"
+    if audio_bytes[:4] == b"\x1aE\xdf\xa3":
+        return "webm/matroska (MediaRecorder default) -- convert to WAV client-side"
+    if audio_bytes[:4] == b"OggS":
+        return "ogg/opus"
+    if audio_bytes[:3] == b"ID3":
+        return "mp3"
+    if audio_bytes[4:8] == b"ftyp":
+        return "m4a/mp4 (phone recording) -- convert to WAV client-side"
+    if audio_bytes[:4] == b"fLaC":
+        return "flac (should have parsed?)"
+    if audio_bytes[:4] == b"\x30\x26\xb2\x75":
+        return "wma/asf"
+    if audio_bytes[:5] == b"#!AMR":
+        return "amr"
+    return "unknown binary"

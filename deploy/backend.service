@@ -1,0 +1,24 @@
+# systemd unit for the SIH backend on the AlmaLinux VPS.
+# Assumes the repo lives at /opt/sih-backend with its venv already set up
+# (see README "Deploy on a VPS"). Install:
+#   sudo cp deploy/backend.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now backend
+# Logs: journalctl -u backend -f
+
+[Unit]
+Description=SIH26104 voice-clone-detection backend (FastAPI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/opt/sih-backend
+ExecStart=/opt/sih-backend/venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=3
+# Scoring is CPU-bound; a couple of worker threads under uvicorn's async
+# loop is plenty for a demo. Keep models on the machine's HF cache:
+Environment=HF_HUB_OFFLINE=1
+
+[Install]
+WantedBy=multi-user.target
